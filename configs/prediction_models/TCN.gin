@@ -18,3 +18,7 @@ model/hyperparameter.max_seq_length = %HORIZON
 model/hyperparameter.num_channels = (32, 256, "log")
 model/hyperparameter.kernel_size = (2, 128, "log")
 model/hyperparameter.dropout = (0.0, 0.4)
+
+# Data-loading optimizations (added for 30-trial post-presentation sweeps)
+train_common.persistent_workers = True
+train_common.num_workers = 16

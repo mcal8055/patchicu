@@ -1,0 +1,38 @@
+# PatchTST with frozen best hyperparameters from the 30-trial Optuna
+# Gaussian-Process sweep on 1hr HiRID sepsis. These hyperparameters
+# produced REPORT.pdf's headline result (AUROC 0.940 / AUPRC 0.312 across
+# 5x5 nested cross-validation; n=29,642 stays).
+#
+# Values extracted from the resolved train_config.gin of the 25-fold final
+# evaluation run (yaib_logs/.../PatchTST_1hr_30trial/2026-04-21T08-15-22).
+# Use this file to reproduce the headline result without re-running the sweep.
+# To re-run the full 30-trial sweep, use PatchTST.gin (search space) with the
+# example sweep config in experiments/.
+
+include "configs/prediction_models/common/DLCommon.gin"
+
+# Training configuration
+train_common.model = @PatchTST
+train_common.batch_size = 1024
+train_common.precision = "16-mixed"
+train_common.persistent_workers = True
+train_common.num_workers = 16
+
+# YAIB requires hyperparameter scope bindings even when not tuning
+optimizer/hyperparameter.class_to_tune = @Adam
+model/hyperparameter.class_to_tune = @PatchTST
+
+# Frozen 30-trial best — Adam optimizer
+Adam.lr = 9.941476638993041e-05
+Adam.weight_decay = 1e-06
+
+# Frozen 30-trial best — PatchTST model
+PatchTST.num_classes = %NUM_CLASSES
+PatchTST.patch_length = 24
+PatchTST.patch_stride = 6
+PatchTST.d_model = 56
+PatchTST.num_attention_heads = 2
+PatchTST.num_hidden_layers = 2
+PatchTST.ffn_dim = 192
+PatchTST.dropout = 0.29999999999999993
+PatchTST.head_dropout = 0.3

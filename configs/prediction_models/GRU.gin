@@ -15,5 +15,9 @@ optimizer/hyperparameter.lr = (1e-6, 1e-4, "log")
 model/hyperparameter.class_to_tune = @GRUNet
 model/hyperparameter.num_classes = %NUM_CLASSES
 model/hyperparameter.hidden_dim = (32, 512, "log")
-model/hyperparameter.layer_dim = (1, 10)
+model/hyperparameter.layer_dim = (1, 5)
 
+
+# Data-loading optimizations (added for 30-trial post-presentation sweeps)
+train_common.persistent_workers = True
+train_common.num_workers = 16

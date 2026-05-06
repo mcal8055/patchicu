@@ -1,0 +1,27 @@
+# Settings for HuggingFace PatchTST model.
+
+# Common settings for DL models
+include "configs/prediction_models/common/DLCommon.gin"
+
+# Train params
+train_common.model = @PatchTST
+train_common.batch_size = 1024
+train_common.precision = "16-mixed"
+train_common.persistent_workers = True
+train_common.num_workers = 16
+
+optimizer/hyperparameter.class_to_tune = @Adam
+optimizer/hyperparameter.weight_decay = 1e-6
+optimizer/hyperparameter.lr = (1e-6, 1e-4)
+
+# Model params
+model/hyperparameter.class_to_tune = @PatchTST
+model/hyperparameter.num_classes = %NUM_CLASSES
+model/hyperparameter.patch_length = (6, 24)
+model/hyperparameter.patch_stride = (6, 24)
+model/hyperparameter.d_model = (32, 80, "log")
+model/hyperparameter.num_attention_heads = (2, 4)
+model/hyperparameter.num_hidden_layers = (1, 2)
+model/hyperparameter.ffn_dim = (64, 192, "log")
+model/hyperparameter.dropout = (0.0, 0.3)
+model/hyperparameter.head_dropout = (0.0, 0.3)
