@@ -1,0 +1,51 @@
+# Wandb sweep for non-DL baselines — LogisticRegression + LGBMClassifier on notchpeak CPU.
+# Runs in parallel with the granite GH200 sweep (separate sweep, same wandb project).
+# Optuna still does inner HP search (MLTuning.gin n_calls=30) within each trial.
+#
+# Create the sweep:
+#   wandb sweep --entity verity-hogans-university-of-utah --project patchicu \
+#       YAIB/experiments/chpc_patchicu_1hr_cpu_sweep.yml
+#
+# Then submit the notchpeak CPU agent(s):
+#   sbatch YAIB/experiments/chpc_notchpeak_cpu_agent.sh <sweep_id>
+#   # Submit 2x to parallelize across the 2 models
+
+program: icu-benchmarks
+
+method: grid
+
+name: patchicu_hirid_sepsis_1hr_cpu_baselines_30trial
+
+command:
+  # Using `python3 -m icu_benchmarks.run` instead of ${program} because the
+  # `icu-benchmarks` binary in yaib_env_x86 has a broken shebang pointing at
+  # a non-existent venv path (yaib_env/bin/python3). Module-form bypasses it.
+  - python3
+  - -m
+  - icu_benchmarks.run
+  - train
+  - -d
+  - ${SCRATCH}/patchicu/sepsis_1hr_hirid
+  - -t
+  - BinaryClassification
+  - --log-dir
+  - ${SCRATCH}/patchicu/yaib_logs
+  - --tune
+  - --wandb-sweep
+
+parameters:
+  data_dir:
+    values:
+      - ${SCRATCH}/patchicu/sepsis_1hr_hirid
+  model:
+    values:
+      - LogisticRegression
+      - LGBMClassifier
+  seed:
+    values:
+      - 1111
+
+# Grid expansion: 2 trials (LR + LGBM).
+# Internal Optuna 30-trial HP search runs in each trial.
+#   - LR: ~30 min (quick, small HP space)
+#   - LGBM: ~2-3 hr (larger HP space, gradient boosting)

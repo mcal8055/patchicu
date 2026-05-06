@@ -1,0 +1,54 @@
+# Wandb sweep config for PatchICU — 1hr HiRID sepsis, all 5 DL models at 30-trial Optuna each.
+#
+# The outer layer (this YAML) is a wandb grid sweep over (model × seed).
+# The inner layer (--tune flag) runs 30-trial Optuna hyperparameter search per model.
+# Pattern adapted from YAIB/experiments/benchmark_classification.yml.
+#
+# Create the sweep once:
+#   wandb sweep --entity verity-hogans-university-of-utah --project patchicu \
+#       YAIB/experiments/chpc_patchicu_1hr_sweep.yml
+#   # prints a sweep ID like: verity-hogans-university-of-utah/patchicu/abc12345
+#
+# Then launch N SLURM agents to pull trials:
+#   sbatch YAIB/experiments/chpc_granite_agent.sh <sweep_id>
+
+program: icu-benchmarks
+
+method: grid
+
+name: patchicu_hirid_sepsis_1hr_30trial
+
+command:
+  - ${env}
+  - ${program}
+  - train
+  # -d is required by argparse; wandb's data_dir parameter overrides this at runtime
+  # via apply_wandb_sweep(args). Keep a valid path here so argparse passes.
+  - -d
+  - ${SCRATCH}/patchicu/sepsis_1hr_hirid
+  - -t
+  - BinaryClassification
+  - --log-dir
+  - ${SCRATCH}/patchicu/yaib_logs
+  - --tune
+  - --wandb-sweep
+
+parameters:
+  data_dir:
+    values:
+      - ${SCRATCH}/patchicu/sepsis_1hr_hirid
+  model:
+    values:
+      - PatchTST
+      - GRU
+      - LSTM
+      - TCN
+      - Transformer
+  seed:
+    values:
+      - 1111
+
+# Grid expansion: 1 cohort × 5 models × 1 seed = 5 trials total.
+# Each trial internally runs 30-trial Optuna HP search + 5×5 nested CV final eval.
+# Estimated runtime per trial on GH200 (with data-loading opts): ~3-6 hr.
+# All 5 trials sequentially on one agent: ~25 hr (needs --requeue).
