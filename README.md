@@ -1,289 +1,106 @@
-![YAIB logo](https://github.com/rvandewater/YAIB/blob/development/docs/figures/yaib_logo.png?raw=true)
+# PatchICU
 
-# 🧪 Yet Another ICU Benchmark
+A patch-based transformer benchmark for ICU sepsis prediction on the HiRID-ICU-Benchmark.
 
-[![CI](https://github.com/rvandewater/YAIB/actions/workflows/ci.yml/badge.svg?branch=development)](https://github.com/rvandewater/YAIB/actions/workflows/ci.yml)
-[![Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-![Platform](https://img.shields.io/badge/platform-linux--64%20|%20win--64%20|%20osx--64-lightgrey)
-[![arXiv](https://img.shields.io/badge/arXiv-2306.05109-b31b1b.svg)](http://arxiv.org/abs/2306.05109)
-[![PyPI version shields.io](https://img.shields.io/pypi/v/yaib.svg)](https://pypi.python.org/pypi/yaib/)
-[![python](https://img.shields.io/badge/-Python_3.10-blue?logo=python&logoColor=white)](https://www.python.org/downloads/release/python-3100/)
-[![pytorch](https://img.shields.io/badge/PyTorch_2.0+-ee4c2c?logo=pytorch&logoColor=white)](https://pytorch.org/get-started/locally/)
-[![lightning](https://img.shields.io/badge/-Lightning_2.0+-792ee5?logo=pytorchlightning&logoColor=white)](https://pytorchlightning.ai/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+This repository extends [YAIB](https://github.com/rvandewater/YAIB) (Yet Another ICU Benchmark) with [PatchTST](https://arxiv.org/abs/2211.14730) — a patch-based time-series Transformer not previously evaluated on the HiRID sepsis task — along with the configs, sweep infrastructure, and analysis scripts used to produce the results in [`REPORT.pdf`](REPORT.pdf).
 
-[//]: # (TODO: add coverage once we have some tests )
+The project has two purposes: (1) demonstrate that a state-of-the-art time-series architecture produces competitive sepsis-prediction performance on a public ICU benchmark, and (2) use that demonstrated foundation to scope two forward research directions (below) addressing gaps in the deployed sepsis-prediction literature.
 
-Yet another ICU benchmark (YAIB) provides a framework for doing clinical machine learning experiments on Intensive Care Unit 
-(ICU) EHR data.
+## What's demonstrated
 
-We support the following datasets out of the box:
+| Aspect | Result |
+|---|---|
+| Architecture | PatchTST encoder integrated as a YAIB-conformant DL model |
+| Cohort | HiRID-ICU-Benchmark sepsis task — 29,642 stays, hourly resolution |
+| Evaluation | 5 × 5 nested cross-validation, 30-trial Optuna GP tuning |
+| Performance (HiRID, 30-trial) | **AUROC 0.940 [0.938, 0.942], AUPRC 0.312 [0.296, 0.329]** |
+| Cross-site (preliminary, MIMIC-IV) | AUROC 0.955, AUPRC 0.297 — single random trial, untuned |
+| Baselines outperformed | Logistic Regression, LSTM, GRU, TCN, Transformer, LightGBM |
 
-| **Dataset**                 | [MIMIC-III](https://physionet.org/content/mimiciii/) / [IV](https://physionet.org/content/mimiciv/) | [eICU-CRD](https://physionet.org/content/eicu-crd/) | [HiRID](https://physionet.org/content/hirid/1.1.1/) | [AUMCdb](https://doi.org/10.17026/dans-22u-f8vd) |
-|-----------------------------|-----------------------------------------------------------------------------------------------------|-----------------------------------------------------|-----------------------------------------------------|--------------------------------------------------|
-| **Admissions**              | 40k / 73k                                                                                           | 200k                                                | 33k                                                 | 23k                                              |
-| **Version**                 | v1.4 / v2.2                                                                                         | v2.0                                                | v1.1.1                                              | v1.0.2                                           |  
-| **Frequency** (time-series) | 1 hour                                                                                              | 5 minutes                                           | 2 / 5 minutes                                       | up to 1 minute                                   |
-| **Originally published**    | 2015  / 2020                                                                                        | 2017                                                | 2020                                                | 2019                                             | 
-| **Origin**                  | USA                                                                                                 | USA                                                 | Switzerland                                         | Netherlands                                      |
+The 30-trial PatchTST result more than doubles the AUPRC of the next-best baseline (LightGBM at 0.128). Methodology, tuning-budget asymmetry, and limitations are detailed in [`REPORT.pdf`](REPORT.pdf). A public [wandb report](https://api.wandb.ai/links/verity-hogans-university-of-utah/3rjnpwzn) presents per-trial sweep visualizations and training curves from the 30-trial PatchTST tuning.
 
-New datasets can also be added. We are currently working on a package to make this process as smooth as possible.
-The benchmark is designed for operating on preprocessed parquet files.
-<!-- We refer to  PyICU (in development)
-or [ricu package](https://github.com/eth-mds/ricu) for generating these parquet files for particular cohorts and endpoints. -->
+## Status
 
-We provide five common tasks for clinical prediction by default:
+| Component | Status |
+|---|---|
+| 1-hour HiRID benchmark (headline) | **Complete** |
+| Cross-site validation (MIMIC-IV, eICU) | Preliminary; some runs pending |
+| 2-minute native-resolution variant | Blocked on cohort-generation memory issues; not in this release |
+| Empirical leakage audit (label permutation test) | Static review only; empirical test not yet run |
+| Causal-attention variant (deployment-ready) | Not yet implemented |
 
-| No  | Task                      | Frequency                 | Type                  | 
-|-----|---------------------------|---------------------------|-----------------------|
-| 1   | ICU Mortality             | Once per Stay (after 24H) | Binary Classification |
-| 2   | Acute Kidney Injury (AKI) | Hourly (within 6H)        | Binary Classification |
-| 3   | Sepsis                    | Hourly (within 6H)        | Binary Classification |
-| 4   | Kidney Function(KF)       | Once per stay             | Regression            |
-| 5   | Length of Stay (LoS)      | Hourly (within 7D)        | Regression            |
+## Forward research directions
 
-New tasks can be easily added.
-To get started right away, we include the eICU and MIMIC-III demo datasets in our repository.
+The 1-hour result is the empirical foundation. Two parallel research directions extend it.
 
-The following repositories may be relevant as well:
+### Task 1 — Shortening time to targeted antibiotic intervention
 
-- [YAIB-cohorts](https://github.com/rvandewater/YAIB-cohorts): Cohort generation for YAIB.
-- [YAIB-models](https://github.com/rvandewater/YAIB-models): Pretrained models for YAIB.
-- [ReciPys](https://github.com/rvandewater/ReciPys): Preprocessing package for YAIB pipelines.
+Current sepsis early-warning systems (TREWS and most published work) produce a single binary sepsis flag. The clinically actionable next step — selecting *which* antibiotic — is gated on lab turnaround for organism identification and susceptibility testing. Empiric broad-spectrum coverage starts immediately on suspicion of sepsis; narrowing to targeted coverage waits 24–72+ hours for cultures, and is further complicated by the high false-negative rate of cultures drawn after empiric antibiotics begin.
 
-For all YAIB-related repositories, please see: https://github.com/stars/rvandewater/lists/yaib.
+Task 1 investigates whether a transformer-based model can predict *organism class* (or resistance profile) from clinical features prior to culture return, supporting earlier empiric→targeted narrowing. Likely cohort pivot to MIMIC-IV (detailed microbiology). Positions against direct-detection approaches (Inflammatix HostDx, Karius, T2 Biosystems) as a no-additional-assay alternative.
 
-# 📄Paper
+### Task 2 — Accuracy with a defined minimum feature set
 
-To reproduce the benchmarks in our paper, we refer to the [ML reproducibility document](PAPER.md).
-If you use this code in your research, please cite the following publication:
+HiRID provides ~50 dynamic variables at high temporal density — far more than most non-academic hospitals collect. A deployable sepsis EWS needs to retain signal at community-hospital feature density (vitals + basic CBC + BMP + lactate; ~15–20 features rather than 50).
+
+Task 2 systematically evaluates *performance as a function of feature count* using feature selection, knowledge distillation, and pretrain-then-fine-tune approaches. Deliverable: an explicit performance/feature-count tradeoff curve and a defensible minimum-feature set with documented retained performance.
+
+## Repository structure
 
 ```
-@inproceedings{vandewaterYetAnotherICUBenchmark2024,
-  title = {Yet Another ICU Benchmark: A Flexible Multi-Center Framework for Clinical ML},
-  shorttitle = {Yet Another ICU Benchmark},
-  booktitle = {The Twelfth International Conference on Learning Representations},
-  author = {van de Water, Robin and Schmidt, Hendrik Nils Aurel and Elbers, Paul and Thoral, Patrick and Arnrich, Bert and Rockenschaub, Patrick},
-  year = {2024},
-  month = oct,
-  urldate = {2024-02-19},
-  langid = {english},
-}
-
+patchicu/
+├── README.md                                       # This file (replaces upstream YAIB README)
+├── REPORT.pdf                                      # Empirical writeup
+├── REPRODUCE.md                                    # Setup + reproduction instructions
+├── cohort-modifications.patch                      # Bug-fix patch against rvandewater/YAIB-cohorts
+├── figures/                                        # Result + EDA figures
+├── icu_benchmarks/models/dl_models/patchtst.py     # YAIB-conformant PatchTST adapter
+├── configs/prediction_models/
+│   ├── PatchTST.gin                                # Default PatchTST config
+│   └── PatchTST_1hr_tuned.gin                      # Frozen 30-trial best HPs (reproduces REPORT.pdf headline)
+├── experiments/                                    # Sweep configs (institutional paths scrubbed)
+├── requirements.txt                                # Pinned dependencies
+└── ...                                             # Standard YAIB structure (icu_benchmarks/, scripts/, tests/, etc.)
 ```
 
-This paper can also be found on arxiv [2306.05109](https://arxiv.org/abs/2306.05109)
+This repository is a fork of [`rvandewater/YAIB`](https://github.com/rvandewater/YAIB). Please cite [van de Water et al., 2024](https://arxiv.org/abs/2306.05109) for the underlying benchmark framework. PatchICU adds the PatchTST integration and surrounding infrastructure; YAIB's core APIs are unchanged.
 
-# 💿Installation
+## Reproduction
 
-YAIB is currently ideally installed from source, however we also offer it an early PyPi release.
+See [`REPRODUCE.md`](REPRODUCE.md) for full setup, cohort regeneration, and pinned-dependency commits. In brief:
 
-## Installation from source
+1. **Data access.** HiRID v1.1.1 requires PhysioNet credentialed access (DUA). Raw data is not redistributed.
+2. **Cohort.** Generated against `rvandewater/YAIB-cohorts` at commit `74ac699` with a one-line bug-fix patch (see [`cohort-modifications.patch`](cohort-modifications.patch)).
+3. **Training.** YAIB's standard `icu-benchmarks` CLI with the included `PatchTST_1hr_tuned.gin` config. Hardware: University of Utah CHPC NVIDIA GH200 partition.
+4. **Pinned dependencies.** See [`requirements.txt`](requirements.txt) — extends YAIB upstream's pin list with `transformers==5.5.3` for the HuggingFace PatchTST port.
 
-First, we clone this repository using git:
+## Background and prior art
 
-````
-git clone https://github.com/rvandewater/YAIB.git
-````
+The most-cited deployed sepsis early-warning system in current literature is **TREWS** (Henry et al., *Nature Medicine* 2022), a mixture-of-Cox-proportional-hazards system deployed across five Johns Hopkins hospitals. The TREWS paper's primary contribution is a deep adoption analysis showing that provider engagement, not raw model performance, is the binding constraint at deployment scale.
 
-Please note the branch. The newest features and fixes are available at the development branch:
+PatchICU differs from TREWS along five axes relevant to evaluating this work:
+- **Modeling paradigm:** patch-based transformer vs. mixture-of-Cox.
+- **Setting:** ICU-only (HiRID) vs. whole-hospital deployment.
+- **Reproducibility:** open code on a public benchmark vs. proprietary code on private EHR.
+- **Forward direction:** organism-class targeting and minimum-feature deployability vs. continued binary sepsis flagging.
+- **Stage:** research artifact vs. deployed CDS tool.
 
-````
-git checkout development
-````
+Direct performance comparisons between PatchICU and TREWS are *not* meaningful (different cohorts, different label phenotyping, different evaluation categories) and are deliberately not made in [`REPORT.pdf`](REPORT.pdf).
 
-YAIB can be installed using a conda environment (preferred) or pip. Below are the three CLI commands to install YAIB
-using **conda**.
+## About
 
-The first command will install an environment based on Python 3.10.
+This work was completed as a final project for BMI 6114 (Deep Learning in Biomedicine), University of Utah, with empirical collaboration from David Bean. Ongoing development is led by Josh McAlister (MSBA, David Eccles School of Business; pivoting into Biomedical Informatics). I am not currently pursuing a terminal degree — though that path remains open if the research warrants the commitment.
 
-```
-conda env update -f environment.yml
-```
+I am currently seeking a paid research home (RA, research staff, or equivalent) to continue this work in a Biomedical Informatics or affiliated lab. If you are a faculty member whose interests align with the directions above, I would welcome the conversation.
 
-> Use `environment.yml` on x86 hardware. Please note that this installs Pytorch as well. 
+**Contact:** Josh McAlister · u1561737@utah.edu
 
-> For mps, one needs to comment out _pytorch-cuda_, see the [PyTorch install guide](https://pytorch.org/get-started/locally/).
+## Citations
 
-We then activate the environment and install a package called `icu-benchmarks`, after which YAIB should be operational.
+- **YAIB** — van de Water R, Schmidt H, Elbers P, Thoral P, Arnrich B, Rockenschaub P. *Yet Another ICU Benchmark: A Flexible Multi-Center Framework for Clinical ML.* ICLR 2024.
+- **HiRID** — Faltys M, Zimmermann M, Lyu X, et al. *HiRID, a high time-resolution ICU dataset (v1.1.1).* PhysioNet, 2021. https://doi.org/10.13026/nkwc-js72
+- **PatchTST** — Nie Y, Nguyen NH, Sinthong P, Kalagnanam J. *A time series is worth 64 words: long-term forecasting with Transformers.* ICLR 2023.
 
-```
-conda activate yaib
-pip install -e .
-```
+## License
 
-[//]: # (If you want to install the icu-benchmarks package with **pip**, execute the command below:)
-
-[//]: # ()
-
-[//]: # (```)
-
-[//]: # (pip install torch numpy && pip install -e .)
-
-[//]: # (```)
-After installation, please check if your Pytorch version works with CUDA (in case available) to ensure the best performance.
-YAIB will automatically list available processors at initialization in its log files.
-
-# 👩‍💻Usage
-
-Please refer to [our wiki](https://github.com/rvandewater/YAIB/wiki) for detailed information on how to use YAIB.
-
-## Quickstart 🚀 (demo data)
-The authors of MIMIC-III and eICU have made a small demo dataset available to demonstrate their use. They can be found on Physionet: [MIMIC-III Clinical Database Demo](https://physionet.org/content/mimiciii-demo/1.4/) and [eICU Collaborative Research Database Demo](https://physionet.org/content/eicu-crd-demo/2.0.1/). These datasets are published under the [Open Data Commons Open Database License v1.0](https://opendatacommons.org/licenses/odbl/1-0/) and can be used without credentialing procedure. We have created demo cohorts processed **solely from these datasets** for each of our currently supported task endpoints. To the best of our knowledge, this complies with the license and the respective dataset author's instructions. Usage of the task cohorts and the dataset is only permitted with the above license.
-We **strongly recommend** completing a human subject research training to ensure you properly handle human subject research data. 
-
-In the folder `demo_data` we provide processed publicly available demo datasets from eICU and MIMIC with the necessary labels
-for `Mortality at 24h`,`Sepsis`, `Akute Kidney Injury`, `Kidney Function`, and `Length of Stay`.
-
-If you do not yet have access to the ICU datasets, you can run the following command to train models for the included demo
-cohorts:
-
-```
-wandb sweep --verbose experiments/demo_benchmark_classification.yml
-wandb sweep --verbose experiments/demo_benchmark_regression.yml
-```
-
-```train
-wandb agent <sweep_id>
-```
-
-> Tip: You can choose to run each of the configurations on a SLURM cluster instance by `wandb agent --count 1 <sweep_id>`
-
-> Note: You will need to have a wandb account and be logged in to run the above commands.
-
-## Getting the datasets
-
-HiRID, eICU, and MIMIC IV can be accessed through [PhysioNet](https://physionet.org/). A guide to this process can be
-found [here](https://eicu-crd.mit.edu/gettingstarted/access/).
-AUMCdb can be accessed through a separate access [procedure](https://github.com/AmsterdamUMC/AmsterdamUMCdb). We do not have
-involvement in the access procedure and can not answer to any requests for data access.
-
-## Cohort creation
-
-Since the datasets were created independently of each other, they do not share the same data structure or data identifiers. In
-order to make them interoperable, use the preprocessing utilities
-provided by the [ricu package](https://github.com/eth-mds/ricu).
-Ricu pre-defines a large number of clinical concepts and how to load them from a given dataset, providing a common interface to
-the data, that is used in this
-benchmark. Please refer to our [cohort definition](https://github.com/rvandewater/YAIB-cohorts) code for generating the cohorts
-using our python interface for ricu.
-After this, you can run the benchmark once you have gained access to the datasets.
-
-# 👟 Running YAIB
-
-## Preprocessing and Training
-
-The following command will run training and evaluation on the MIMIC demo dataset for (Binary) mortality prediction at 24h with
-the
-LGBMClassifier. Child samples are reduced due to the small amount of training data. We load available cache and, if available,
-load
-existing cache files.
-
-```
-icu-benchmarks \
-    -d demo_data/mortality24/mimic_demo \
-    -n mimic_demo \
-    -t BinaryClassification \
-    -tn Mortality24 \
-    -m LGBMClassifier \
-    -hp LGBMClassifier.min_child_samples=10 \
-    --generate_cache \
-    --load_cache \
-    --seed 2222 \
-    -l ../yaib_logs/ \
-    --tune
-```
-
-> For a list of available flags, run `icu-benchmarks train -h`.
-
-> Run with `PYTORCH_ENABLE_MPS_FALLBACK=1` on Macs with Metal Performance Shaders.
-
-[//]: # (> Please note that, for Windows based systems, paths need to be formatted differently, e.g: ` r"\..\data\mortality_seq\hirid"`.)
-> For Windows based systems, the next line character (\\)  needs to be replaced by (^) (Command Prompt) or (`) (Powershell)
-> respectively.
-
-
-Alternatively, the easiest method to train all the models in the paper is to run these commands from the directory root:
-
-```train
-wandb sweep --verbose experiments/benchmark_classification.yml
-wandb sweep --verbose experiments/benchmark_regression.yml
-```
-
-This will create two hyperparameter sweeps for WandB for the classification and regression tasks.
-This configuration will train all the models in the paper. You can then run the following command to train the models:
-
-```train
-wandb agent <sweep_id>
-```
-
-> Tip: You can choose to run each of the configurations on a SLURM cluster instance by `wandb agent --count 1 <sweep_id>`
-
-> Note: You will need to have a wandb account and be logged in to run the above commands.
-
-## Evaluate or Finetune
-
-It is possible to evaluate a model trained on another dataset and no additional training is done.
-In this case, the source dataset is the demo data from MIMIC and the target is the eICU demo:
-
-```
-icu-benchmarks \
-    --eval \
-    -d demo_data/mortality24/eicu_demo \
-    -n eicu_demo \
-    -t BinaryClassification \
-    -tn Mortality24 \
-    -m LGBMClassifier \
-    --generate_cache \
-    --load_cache \
-    -s 2222 \
-    -l ../yaib_logs \
-    -sn mimic \
-    --source-dir ../yaib_logs/mimic_demo/Mortality24/LGBMClassifier/2022-12-12T15-24-46/repetition_0/fold_0
-```
-
-> A similar syntax is used for finetuning, where a model is loaded and then retrained. To run finetuning, replace `--eval` with `-ft`.
-
-## Models
-
-We provide several existing machine learning models that are commonly used for multivariate time-series data.
-`pytorch` is used for the deep learning models, `lightgbm` for the boosted tree approaches, and `sklearn` for other classical
-machine learning models.
-The benchmark provides (among others) the following built-in models:
-
-- [Logistic Regression](https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.LogisticRegression.html?highlight=logistic+regression):
-  Standard regression approach.
-- [Elastic Net](https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.ElasticNet.html): Linear regression with
-  combined L1 and L2 priors as regularizer.
-- [LightGBM](https://proceedings.neurips.cc/paper/2017/file/6449f44a102fde848669bdd9eb6b76fa-Paper.pdf): Efficient gradient
-  boosting trees.
-- [Long Short-term Memory (LSTM)](https://ieeexplore.ieee.org/document/818041): The most commonly used type of Recurrent Neural
-  Networks for long sequences.
-- [Gated Recurrent Unit (GRU)](https://arxiv.org/abs/1406.1078) : A extension to LSTM which showed
-  improvements ([paper](https://arxiv.org/abs/1412.3555)).
-- [Temporal Convolutional Networks (TCN)](https://arxiv.org/pdf/1803.01271 ): 1D convolution approach to sequence data. By
-  using dilated convolution to extend the receptive field of the network it has shown great performance on long-term
-  dependencies.
-- [Transformers](https://papers.nips.cc/paper/2017/file/3f5ee243547dee91fbd053c1c4a845aa-Paper.pdf): The most common Attention
-  based approach.
-
-# 🛠️ Development
-
-To adapt YAIB to your own use case, you can use
-the [development information](https://github.com/rvandewater/YAIB/wiki/Contribution-and-development) page as a reference.
-We appreciate contributions to the project. Please read the [contribution guidelines](CONTRIBUTING.MD) before submitting a pull
-request.
-
-# Acknowledgements
-This project has been developed partially under the funding of “Gemeinsamer Bundesausschuss (G-BA) Innovationsausschuss” in the framework of “CASSANDRA - Clinical ASSist AND aleRt Algorithms”.
-(project number 01VSF20015). We would like to acknowledge the work of Alisher Turubayev, Anna Shopova, Fabian Lange, Mahmut Kamalak, Paul Mattes, and Victoria Ayvasky for adding Pytorch Lightning, Weights and Biases compatibility, and several optional imputation methods to a later version of the benchmark repository. 
-
-We do not own any of the datasets used in this benchmark. This project uses heavily adapted components of
-the [HiRID benchmark](https://github.com/ratschlab/HIRID-ICU-Benchmark/). We thank the authors for providing this codebase and
-encourage further development to benefit the scientific community. The demo datasets have been released under
-an [Open Data Commons Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/1-0/).
-
-# License
-
-This source code is released under the MIT license, included [here](LICENSE). We do not own any of the datasets used or
-included in this repository. 
+This repository inherits its license from upstream YAIB (MIT). See [`LICENSE`](LICENSE).
