@@ -28,6 +28,7 @@ The 30-trial PatchTST result more than doubles the AUPRC of the next-best baseli
 | 2-minute native-resolution variant | Blocked on cohort-generation memory issues; not in this release |
 | Empirical leakage audit (label permutation test) | Static review only; empirical test not yet run |
 | Causal-attention variant (deployment-ready) | Not yet implemented |
+| MC dropout + isotonic calibration | **Available** in [`analysis/mc_calibration.py`](analysis/mc_calibration.py) |
 
 ## Forward research directions
 

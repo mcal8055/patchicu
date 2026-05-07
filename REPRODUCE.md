@@ -79,6 +79,10 @@ For canonical CLI invocations, see [YAIB's main documentation](https://github.co
 3. **2-minute resolution variant not included** — The native 2-minute HiRID variant is not in this release. The exploratory 2-minute cohort had a 3.9× prevalence shift relative to the standard 1-hour cohort (46% of stays dropped via undocumented filtering); a literature-comparable rebuild is planned future work.
 4. **R/4.2.2 + gcc/13.1.0 modules required** — Older R versions miss `ricu` features; older gcc versions fail to compile some R packages with format-security errors.
 
+## Post-hoc analysis
+
+Optional analysis utilities live in [`analysis/`](analysis/). The main one is `mc_calibration.py`, which provides MC-dropout inference (with streaming aggregation, so memory is constant in the number of MC passes) and isotonic calibration via scikit-learn's `IsotonicRegression`. No additional dependencies beyond what's already in `requirements.txt`. See [`analysis/README.md`](analysis/README.md) for library usage, the CLI, and a recipe for extracting prediction arrays from a trained YAIB checkpoint.
+
 ## Citing reproductions
 
 See [`README.md`](README.md) for the full citation list (YAIB, HiRID, PatchTST). Reproductions of these specific results should additionally credit this repository (Josh McAlister, u1561737@utah.edu).
