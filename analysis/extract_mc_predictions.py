@@ -153,11 +153,35 @@ def main():
     print(f"Fold: repetition={rep_idx}, fold={fold_idx}")
 
     print(f"Parsing gin config: {config_file}")
-    # skip_unknown=True: the train_config.gin references configurables we don't
-    # need (e.g., execute_repeated_cv, tune_hyperparameters) because we're
-    # bypassing the cross_validation orchestrator. We only need data and model
-    # parameters bound, which are imported above.
-    gin.parse_config_file(str(config_file), skip_unknown=True)
+    # skip_unknown=True covers unknown configurables, but not unknown
+    # *parameters* of known configurables (e.g., Adam.decoupled_weight_decay
+    # exists in newer PyTorch but not older). Iteratively strip such bindings
+    # whenever gin complains, since they're version-drift artifacts that
+    # don't affect inference.
+    import re as _re
+    with open(config_file) as _f:
+        _config_lines = _f.readlines()
+    while True:
+        try:
+            gin.parse_config(''.join(_config_lines), skip_unknown=True)
+            break
+        except ValueError as _e:
+            _m = _re.search(
+                r"Configurable '(\w+)' doesn't have a parameter named '(\w+)'",
+                str(_e),
+            )
+            if not _m:
+                raise
+            _cfg, _param = _m.group(1), _m.group(2)
+            _pat = _re.compile(rf'^\s*{_re.escape(_cfg)}\.{_re.escape(_param)}\s*=')
+            _before = len(_config_lines)
+            _config_lines = [_l for _l in _config_lines if not _pat.match(_l)]
+            if len(_config_lines) == _before:
+                raise
+            print(
+                f"  [skip] unknown gin binding {_cfg}.{_param} "
+                "(version drift; safe to ignore for inference)"
+            )
 
     print("Running YAIB preprocess_data (this rebuilds the fold's splits)...")
     data = preprocess_data(
