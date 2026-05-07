@@ -49,13 +49,21 @@ from sklearn.metrics import (
 )
 
 
-DROPOUT_CLASSES = (
-    nn.Dropout,
-    nn.Dropout1d,
-    nn.Dropout2d,
-    nn.Dropout3d,
-    nn.AlphaDropout,
-    nn.FeatureAlphaDropout,
+# Build the tuple defensively: nn.Dropout1d only exists in PyTorch >= 1.12.
+# Older torch installs would raise AttributeError at import time without this.
+DROPOUT_CLASSES = tuple(
+    cls for cls in (
+        getattr(nn, name, None)
+        for name in (
+            'Dropout',
+            'Dropout1d',
+            'Dropout2d',
+            'Dropout3d',
+            'AlphaDropout',
+            'FeatureAlphaDropout',
+        )
+    )
+    if cls is not None
 )
 
 
