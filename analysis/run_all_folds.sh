@@ -45,10 +45,16 @@ for REP in 0 1 2 3 4; do
 
         echo "[$(date +%H:%M:%S)] === rep=${REP} fold=${FOLD} ($((done+1))/$total) ==="
 
-        # Inference
+        # Inference. Use PIPESTATUS to capture the python exit code (tee always returns 0).
         python analysis/extract_mc_predictions.py --fold-dir "$FOLD_DIR" --data-dir "$DATA" --output-dir "$OUT" --n-samples "$N" --device "$DEVICE" --batch-size "$BATCH" 2>&1 | tee "$OUT/run.log"
+        rc=${PIPESTATUS[0]}
+        if [ "$rc" -ne 0 ]; then
+            echo "[$(date +%H:%M:%S)] Inference failed (exit $rc); skipping calibration. See $OUT/run.log."
+            done=$((done+1))
+            continue
+        fi
 
-        # Per-fold calibration
+        # Per-fold calibration (only runs if inference succeeded).
         python analysis/mc_calibration.py --val-probs "$OUT/val_probs.npy" --val-labels "$OUT/val_labels.npy" --test-probs "$OUT/test_probs.npy" --test-labels "$OUT/test_labels.npy" --output "$OUT/results.json" 2>&1 | tee -a "$OUT/run.log"
 
         done=$((done+1))
