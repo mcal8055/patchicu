@@ -1,14 +1,14 @@
-"""Aggregate per-fold MC-dropout calibration results into a summary JSON.
+"""Aggregate per-fold isotonic calibration results into a summary JSON.
 
 Walks ``--root`` looking for ``repetition_*/fold_*/results.json`` files
-produced by ``mc_calibration.py``, computes mean and std across folds for
-AUROC, AUPRC, Brier, and ECE (pre and post calibration), and writes a
+produced by ``isotonic_calibration.py``, computes mean and std across folds
+for AUROC, AUPRC, Brier, and ECE (pre and post calibration), and writes a
 single ``aggregated_results.json``.
 
 Usage:
     python analysis/aggregate_results.py \\
-        --root mc_predictions/all_folds_n50_mps \\
-        --output mc_predictions/all_folds_n50_mps/aggregated_results.json
+        --root predictions/all_folds_mps \\
+        --output predictions/all_folds_mps/aggregated_results.json
 """
 import argparse
 import json

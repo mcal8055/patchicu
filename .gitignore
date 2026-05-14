@@ -132,3 +132,5 @@ yaib_logs/
 
 # PatchICU analysis intermediates (DUA-derived, reproducible from checkpoint+code)
 mc_predictions/
+predictions/**/*.npy
+predictions/**/run.log

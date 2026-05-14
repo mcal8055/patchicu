@@ -63,7 +63,7 @@ Final cohort sizes (matching REPORT.pdf):
 
 ## Training
 
-PatchTST follows YAIB's standard training and evaluation interface (the `icu-benchmarks` CLI, registered via `setup.py`). The model is registered via `configs/prediction_models/PatchTST.gin` (the search space used for hyperparameter sweeps). `PatchTST_1hr_tuned.gin` contains the frozen 30-trial Optuna best hyperparameters that produced REPORT.pdf's headline result (AUROC 0.940 / AUPRC 0.312); use this file to reproduce that result directly without re-running the sweep. To re-run the full 30-trial sweep, use `PatchTST.gin` together with the example sweep config in `experiments/`.
+PatchTST follows YAIB's standard training and evaluation interface (the `icu-benchmarks` CLI, registered via `setup.py`). The model is registered via `configs/prediction_models/PatchTST.gin` (the search space used for hyperparameter sweeps). `PatchTST_1hr_tuned.gin` contains the frozen 30-trial Optuna best hyperparameters that produced REPORT.pdf's headline result (AUROC 0.939 / AUPRC 0.292, post-dropout-integration retrain); use this file to reproduce that result directly without re-running the sweep. To re-run the full 30-trial sweep, use `PatchTST.gin` together with the example sweep config in `experiments/`.
 
 For canonical CLI invocations, see [YAIB's main documentation](https://github.com/rvandewater/YAIB#readme). The exact sweep configurations used to produce REPORT.pdf are in `experiments/` (institutional paths scrubbed; adjust for your environment).
 
@@ -81,7 +81,7 @@ For canonical CLI invocations, see [YAIB's main documentation](https://github.co
 
 ## Post-hoc analysis
 
-Optional analysis utilities live in [`analysis/`](analysis/). The main one is `mc_calibration.py`, which provides MC-dropout inference (with streaming aggregation, so memory is constant in the number of MC passes) and isotonic calibration via scikit-learn's `IsotonicRegression`. No additional dependencies beyond what's already in `requirements.txt`. See [`analysis/README.md`](analysis/README.md) for library usage, the CLI, and a recipe for extracting prediction arrays from a trained YAIB checkpoint.
+Optional analysis utilities live in [`analysis/`](analysis/). The pipeline is `extract_predictions.py` (per-fold deterministic inference, saves probs/labels/pad_mask) → `isotonic_calibration.py` (per-fold isotonic calibration via scikit-learn's `IsotonicRegression`, with the pad_mask applied to match YAIB's in-loop scoring) → `aggregate_results.py` (mean/std across the 25 nested-CV folds). No dependencies beyond `requirements.txt`. See [`analysis/README.md`](analysis/README.md) for the full pipeline, CLI flags, and why the pad_mask is required.
 
 ## Citing reproductions
 

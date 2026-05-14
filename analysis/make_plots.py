@@ -1,16 +1,18 @@
-"""Generate diagnostic plots for MC dropout + isotonic calibration outputs.
+"""Generate diagnostic plots for isotonic calibration outputs.
 
-Reads the .npy prediction arrays saved by ``extract_mc_predictions.py``,
+Reads the .npy prediction arrays saved by ``extract_predictions.py``,
 re-fits the isotonic calibrator on val, applies it to test, and produces
-three figures saved alongside the predictions:
+two figures saved alongside the predictions:
 
     calibration.png    — reliability diagrams pre vs post calibration
     discrimination.png — ROC and PR curves pre vs post (overlay)
-    uncertainty.png    — epistemic-uncertainty distribution and its
-                         relationship to the predicted probability
+
+Uncertainty plotting was removed alongside MC dropout (see
+project_v02_demo_uncertainty.md). For uncertainty plots, use a deep
+ensemble script that loads all 25 nested-CV checkpoints.
 
 Usage:
-    python analysis/make_plots.py --pred-dir mc_predictions/fold_0_n50_mps
+    python analysis/make_plots.py --pred-dir predictions/fold_0_mps
 """
 import argparse
 from pathlib import Path
@@ -114,49 +116,6 @@ def plot_discrimination(test_p_pre, test_p_post, test_y, out_path):
     plt.close(fig)
 
 
-def plot_uncertainty(test_probs, test_epistemic, test_labels, out_path,
-                     scatter_n=20_000, rng_seed=0):
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-
-    # Distribution of BALD score across all (masked) timesteps
-    axes[0].hist(test_epistemic, bins=60, edgecolor='k', alpha=0.75)
-    axes[0].set_yscale('log')
-    axes[0].set_xlabel('Epistemic uncertainty (BALD / mutual information, nats)')
-    axes[0].set_ylabel('Count (log scale)')
-    axes[0].set_title('Distribution of MC-dropout epistemic uncertainty')
-    log2 = float(np.log(2))
-    axes[0].axvline(log2, color='r', linestyle='--', alpha=0.5,
-                    label=f'log(2) = {log2:.3f}  (binary upper bound)')
-    axes[0].grid(True, alpha=0.3)
-    axes[0].legend(loc='upper right')
-
-    # Subsampled scatter — predicted prob vs epistemic, colored by label
-    rng = np.random.default_rng(rng_seed)
-    n = test_probs.size
-    if n > scatter_n:
-        sel = rng.choice(n, size=scatter_n, replace=False)
-    else:
-        sel = np.arange(n)
-    p_s = test_probs[sel]
-    e_s = test_epistemic[sel]
-    y_s = test_labels[sel]
-    pos = y_s == 1
-    neg = y_s == 0
-    axes[1].scatter(p_s[neg], e_s[neg], s=3, alpha=0.25, c='C0',
-                    label=f'negative (n={int(neg.sum()):,})')
-    axes[1].scatter(p_s[pos], e_s[pos], s=3, alpha=0.5, c='C3',
-                    label=f'positive (n={int(pos.sum()):,})')
-    axes[1].set_xlabel('Predicted probability (MC mean)')
-    axes[1].set_ylabel('Epistemic uncertainty (BALD)')
-    axes[1].set_title(f'Pred. prob vs. epistemic — random {scatter_n:,} points')
-    axes[1].legend(loc='upper right')
-    axes[1].grid(True, alpha=0.3)
-
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches='tight')
-    plt.close(fig)
-
-
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
@@ -164,7 +123,7 @@ def main():
     )
     ap.add_argument(
         '--pred-dir', required=True, type=Path,
-        help='Directory containing val/test prediction .npy files',
+        help='Directory containing val/test prediction .npy files (incl. *_mask.npy)',
     )
     ap.add_argument(
         '--out-dir', type=Path, default=None,
@@ -178,18 +137,18 @@ def main():
 
     val_probs = np.load(args.pred_dir / 'val_probs.npy').reshape(-1)
     val_labels = np.load(args.pred_dir / 'val_labels.npy').reshape(-1)
+    val_mask = np.load(args.pred_dir / 'val_mask.npy').reshape(-1).astype(bool)
     test_probs = np.load(args.pred_dir / 'test_probs.npy').reshape(-1)
     test_labels = np.load(args.pred_dir / 'test_labels.npy').reshape(-1)
-    test_epistemic = np.load(args.pred_dir / 'test_epistemic.npy').reshape(-1)
+    test_mask = np.load(args.pred_dir / 'test_mask.npy').reshape(-1).astype(bool)
 
-    val_mask = val_labels >= 0
-    test_mask = test_labels >= 0
+    val_keep = val_mask & (val_labels >= 0)
+    test_keep = test_mask & (test_labels >= 0)
 
-    val_p = val_probs[val_mask]
-    val_y = val_labels[val_mask]
-    test_p = test_probs[test_mask]
-    test_y = test_labels[test_mask]
-    test_eps = test_epistemic[test_mask]
+    val_p = val_probs[val_keep]
+    val_y = val_labels[val_keep]
+    test_p = test_probs[test_keep]
+    test_y = test_labels[test_keep]
 
     cal = IsotonicRegression(out_of_bounds='clip', y_min=0, y_max=1)
     cal.fit(val_p, val_y)
@@ -201,8 +160,6 @@ def main():
     plot_discrimination(test_p, test_p_post, test_y,
                         out / 'discrimination.png')
     print(f'Wrote {out / "discrimination.png"}')
-    plot_uncertainty(test_p, test_eps, test_y, out / 'uncertainty.png')
-    print(f'Wrote {out / "uncertainty.png"}')
 
 
 if __name__ == '__main__':

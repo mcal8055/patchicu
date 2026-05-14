@@ -1,31 +1,32 @@
-"""Extract MC-mean prediction arrays from a trained PatchICU fold checkpoint.
+"""Extract per-fold prediction arrays from a trained PatchICU checkpoint.
 
 Standalone inference script that uses YAIB's ``preprocess_data`` to guarantee
 the per-fold splits and z-scoring exactly match the original training run,
-then runs Monte Carlo dropout (N forward passes with Dropout layers selectively
-enabled, BatchNorm/LayerNorm in eval mode) and saves MC-mean positive-class
-probabilities plus the epistemic / aleatoric uncertainty decomposition for
-the val and test splits.
+then runs a single deterministic forward pass and saves positive-class
+probabilities, labels, and the pad_mask for the val and test splits.
+
+The pad_mask is REQUIRED downstream: YAIB's PredictionPolarsDataset coerces
+labels at padded and unlabeled timesteps to 0 (matching pad_value), which
+makes any naive {0, 1} filter silently include those positions as
+false-zero negatives. Saving the mask alongside probs and labels lets the
+calibration script filter to real, labeled timesteps the same way YAIB's
+train/eval loop does (see icu_benchmarks/models/wrappers.py:335-336).
 
 Usage:
-    python analysis/extract_mc_predictions.py \\
+    python analysis/extract_predictions.py \\
         --fold-dir yaib_logs/.../PatchTST_1hr_30trial/.../repetition_0/fold_0 \\
         --data-dir YAIB-cohorts/data/sepsis/hirid \\
-        --output-dir mc_predictions/fold_0 \\
-        --n-samples 50
+        --output-dir predictions/fold_0
 
 Output files (in ``--output-dir``):
-    val_probs.npy       — [n_stays, time] MC-mean positive-class probabilities
-    val_labels.npy      — [n_stays, time] labels in {0, 1}; -1 = masked
-    val_epistemic.npy   — [n_stays, time] mutual-information / BALD score
-    val_aleatoric.npy   — [n_stays, time] expected per-sample entropy
+    val_probs.npy    — [n_stays, time] positive-class probabilities
+    val_labels.npy   — [n_stays, time] binary labels (0 at padded positions)
+    val_mask.npy     — [n_stays, time] bool, True for real labeled timesteps
     test_probs.npy
     test_labels.npy
-    test_epistemic.npy
-    test_aleatoric.npy
+    test_mask.npy
 
-The probs and labels arrays can be fed directly to:
-    python analysis/mc_calibration.py --val-probs val_probs.npy ...
+Feed all six to ``isotonic_calibration.py``.
 
 Notes:
     - Run with the YAIB Python environment active. Imports require
@@ -33,9 +34,11 @@ Notes:
       working tree, or PYTHONPATH set to its root).
     - The HiRID cohort is DUA-bound. This script reads it locally; nothing
       patient-level is written outside ``--output-dir``.
-    - Compute on a MacBook (CPU): roughly 10-15 minutes per fold for N=50.
-      Streaming MC aggregation keeps memory bounded by one batch of
-      predictions, not by N.
+    - Inference is a single deterministic forward pass (no MC dropout): the
+      GP-tuned PatchICU model converged on dropout~=0, so MC sampling
+      produced near-zero epistemic variance and was retired (see
+      project_v02_demo_uncertainty.md). For uncertainty quantification, use
+      a deep ensemble across the 25 nested-CV checkpoints instead.
 """
 import argparse
 import re
@@ -53,11 +56,6 @@ from icu_benchmarks.data.loader import PredictionPolarsDataset
 from icu_benchmarks.data.split_process_data import preprocess_data
 from icu_benchmarks.models import PatchTST
 
-# Local (sibling module in the same analysis/ directory). When this script is
-# run directly via `python analysis/extract_mc_predictions.py`, Python adds
-# analysis/ to sys.path, so a flat sibling import works.
-from mc_calibration import mc_dropout_predict
-
 
 def parse_fold_path(fold_dir):
     """Extract (repetition_index, fold_index) from a path like .../repetition_0/fold_2."""
@@ -72,35 +70,44 @@ def parse_fold_path(fold_dir):
 
 
 @torch.inference_mode()
-def collect_predictions(model, loader, n_samples, device):
-    """Iterate loader, run MC dropout per batch; return stacked arrays.
+def collect_predictions(model, loader, device):
+    """Iterate loader, run a single deterministic forward pass per batch.
 
     Returns:
-        probs: [total_stays, time] MC-mean positive-class probabilities
-        labels: [total_stays, time] binary labels (-1 for masked timesteps)
-        epistemic: [total_stays, time] BALD score (mutual information)
-        aleatoric: [total_stays, time] expected per-sample entropy
+        probs:  [total_stays, time] positive-class softmax probabilities
+        labels: [total_stays, time] binary labels (0 at padded positions per
+                YAIB's pad_value=0.0 convention)
+        masks:  [total_stays, time] bool, True for real labeled timesteps
     """
-    means, labels, eps_unc, ale_unc = [], [], [], []
+    probs, labels, masks = [], [], []
     on_mps = (str(device) == 'mps')
+    model.eval()
     for i, batch in enumerate(loader):
+        # YAIB's PredictionPolarsDataset returns (data, labels, pad_mask).
+        # Older callers (this script's MC predecessor) dropped batch[2] and
+        # then silently scored padded positions as label=0 negatives. Don't
+        # repeat that mistake — pull all three.
+        if len(batch) < 3:
+            raise RuntimeError(
+                f"Expected (data, labels, mask) 3-tuple from loader; got "
+                f"{len(batch)}-tuple. Refusing to score without the mask."
+            )
         x = batch[0].to(device, non_blocking=True)
-        y = batch[1]  # labels stay on CPU
-        out = mc_dropout_predict(model, x, n_samples=n_samples)
-        means.append(out['mean'][..., 1].cpu().numpy())  # positive-class
-        eps_unc.append(out['epistemic'].cpu().numpy())
-        ale_unc.append(out['aleatoric'].cpu().numpy())
+        y = batch[1]
+        m = batch[2]
+        logits = model(x)
+        p = torch.softmax(logits, dim=-1)[..., 1].cpu().numpy()
+        probs.append(p)
         labels.append(y.numpy() if torch.is_tensor(y) else np.asarray(y))
-        # Free per-batch refs before GC; clear MPS cache between batches
-        del x, out
+        masks.append(m.numpy() if torch.is_tensor(m) else np.asarray(m))
+        del x, logits
         if on_mps:
             torch.mps.empty_cache()
         print(f"  batch {i+1} done", flush=True)
     return (
-        np.concatenate(means, axis=0),
+        np.concatenate(probs, axis=0),
         np.concatenate(labels, axis=0),
-        np.concatenate(eps_unc, axis=0),
-        np.concatenate(ale_unc, axis=0),
+        np.concatenate(masks, axis=0).astype(bool),
     )
 
 
@@ -120,10 +127,6 @@ def main():
     ap.add_argument(
         '--output-dir', required=True, type=Path,
         help='Directory to write the .npy prediction arrays',
-    )
-    ap.add_argument(
-        '--n-samples', type=int, default=50,
-        help='Number of MC dropout passes per batch (default: 50)',
     )
     ap.add_argument(
         '--batch-size', type=int, default=1024,
@@ -218,7 +221,7 @@ def main():
     # explicitly, so we force-override it here. We trust our own checkpoint.
     _orig_torch_load = torch.load
     def _torch_load_compat(*a, **kw):
-        kw['weights_only'] = False  # force-override Lightning's explicit True
+        kw['weights_only'] = False
         return _orig_torch_load(*a, **kw)
     torch.load = _torch_load_compat
     try:
@@ -227,42 +230,36 @@ def main():
         torch.load = _orig_torch_load
     model = model.to(args.device)
 
-    print(f"Running MC dropout (n_samples={args.n_samples}) on val...")
-    val_probs, val_labels, val_eps, val_ale = collect_predictions(
-        model, val_loader, args.n_samples, args.device,
-    )
-    print(f"Running MC dropout on test...")
-    test_probs, test_labels, test_eps, test_ale = collect_predictions(
-        model, test_loader, args.n_samples, args.device,
-    )
+    print("Running deterministic inference on val...")
+    val_probs, val_labels, val_mask = collect_predictions(model, val_loader, args.device)
+    print("Running deterministic inference on test...")
+    test_probs, test_labels, test_mask = collect_predictions(model, test_loader, args.device)
 
     out = args.output_dir
     np.save(out / "val_probs.npy", val_probs)
     np.save(out / "val_labels.npy", val_labels)
-    np.save(out / "val_epistemic.npy", val_eps)
-    np.save(out / "val_aleatoric.npy", val_ale)
+    np.save(out / "val_mask.npy", val_mask)
     np.save(out / "test_probs.npy", test_probs)
     np.save(out / "test_labels.npy", test_labels)
-    np.save(out / "test_epistemic.npy", test_eps)
-    np.save(out / "test_aleatoric.npy", test_ale)
+    np.save(out / "test_mask.npy", test_mask)
 
     print()
     print(f"Saved to {out}/:")
-    print(f"  val_probs.npy       shape={val_probs.shape}  dtype={val_probs.dtype}")
-    print(f"  val_labels.npy      shape={val_labels.shape}  dtype={val_labels.dtype}")
-    print(f"  val_epistemic.npy   shape={val_eps.shape}  range=[{val_eps.min():.4f}, {val_eps.max():.4f}]")
-    print(f"  val_aleatoric.npy   shape={val_ale.shape}  range=[{val_ale.min():.4f}, {val_ale.max():.4f}]")
-    print(f"  test_probs.npy      shape={test_probs.shape}  dtype={test_probs.dtype}")
-    print(f"  test_labels.npy     shape={test_labels.shape}  dtype={test_labels.dtype}")
-    print(f"  test_epistemic.npy  shape={test_eps.shape}  range=[{test_eps.min():.4f}, {test_eps.max():.4f}]")
-    print(f"  test_aleatoric.npy  shape={test_ale.shape}  range=[{test_ale.min():.4f}, {test_ale.max():.4f}]")
+    print(f"  val_probs.npy   shape={val_probs.shape}  dtype={val_probs.dtype}")
+    print(f"  val_labels.npy  shape={val_labels.shape}  dtype={val_labels.dtype}")
+    print(f"  val_mask.npy    shape={val_mask.shape}  real_frac={val_mask.mean():.4f}")
+    print(f"  test_probs.npy  shape={test_probs.shape}  dtype={test_probs.dtype}")
+    print(f"  test_labels.npy shape={test_labels.shape}  dtype={test_labels.dtype}")
+    print(f"  test_mask.npy   shape={test_mask.shape}  real_frac={test_mask.mean():.4f}")
     print()
     print("Next:")
-    print(f"  python analysis/mc_calibration.py \\")
+    print(f"  python analysis/isotonic_calibration.py \\")
     print(f"      --val-probs {out}/val_probs.npy \\")
     print(f"      --val-labels {out}/val_labels.npy \\")
+    print(f"      --val-mask {out}/val_mask.npy \\")
     print(f"      --test-probs {out}/test_probs.npy \\")
     print(f"      --test-labels {out}/test_labels.npy \\")
+    print(f"      --test-mask {out}/test_mask.npy \\")
     print(f"      --output {out}/results.json")
 
 

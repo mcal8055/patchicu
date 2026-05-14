@@ -75,7 +75,18 @@ class PatchTST(DLPredictionWrapper):
         # Store for use in forward()
         self.patch_stride = patch_stride
 
-        # Build HuggingFace PatchTST config
+        # Build HuggingFace PatchTST config.
+        #
+        # Critical: HF PatchTSTConfig has a generic ``dropout`` field that is
+        # stored but never read by any model component, plus six specific
+        # fields (``attention_dropout``, ``positional_dropout``, ``path_dropout``,
+        # ``ff_dropout``, ``head_dropout``) that actually drive Dropout module
+        # creation. Earlier versions of this wrapper only set the inert generic
+        # ``dropout`` and ``head_dropout``, leaving all four specific fields at
+        # their 0.0 default — so encoder/attention/FFN dropout silently never
+        # ran during training, MC dropout was deterministic, and Optuna's
+        # ``dropout`` sweep was inert. Wire the gin ``dropout`` parameter into
+        # all four specific fields so the encoder actually regularizes.
         config = PatchTSTConfig(
             num_input_channels=input_size[2],   # number of clinical features
             context_length=seq_length,           # full padded sequence length
@@ -85,13 +96,25 @@ class PatchTST(DLPredictionWrapper):
             num_attention_heads=num_attention_heads,
             num_hidden_layers=num_hidden_layers,
             ffn_dim=ffn_dim,
-            dropout=dropout,
-            head_dropout=head_dropout,
+            dropout=dropout,                     # kept for completeness; HF ignores it
+            head_dropout=head_dropout,           # used by HF prediction heads (we bypass)
+            attention_dropout=dropout,
+            positional_dropout=dropout,
+            path_dropout=dropout,
+            ff_dropout=dropout,
             attn_implementation=__import__("os").environ.get("PATCHTST_ATTN", "eager"),
         )
 
         # The HF base model: patches -> transformer -> patch-level hidden states
         self.model = PatchTSTModel(config)
+
+        # YAIB uses its own classification head (``self.logit`` below) rather
+        # than HF's PatchTSTPredictionHead, which is the only place ``head_dropout``
+        # is consumed by the HF model. Apply head_dropout here ourselves so the
+        # gin parameter has somewhere to act.
+        self.head_dropout = (
+            nn.Dropout(head_dropout) if head_dropout > 0 else nn.Identity()
+        )
 
         # Per-timestep classification head
         # Also satisfies YAIB requirement: set_metrics() reads self.logit.out_features (wrappers.py:282)
@@ -123,6 +146,6 @@ class PatchTST(DLPredictionWrapper):
             hidden = torch.cat([hidden, last_patch], dim=1)
         hidden = hidden[:, :seq_len, :]  # [batch, time, d_model]
 
-        # Per-timestep classification
-        pred = self.logit(hidden)  # [batch, time, num_classes]
+        # Per-timestep classification (head dropout applied per-timestep).
+        pred = self.logit(self.head_dropout(hidden))  # [batch, time, num_classes]
         return pred

@@ -85,12 +85,87 @@ class PredictionPolarsDataset(CommonPolarsDataset):
 
     Args:
         ram_cache (bool, optional): Whether the complete dataset should be stored in ram. Defaults to True.
+        fast_cache (bool, optional): When ram_cache=True, use a single bulk partition_by pass to materialize
+            all stays at once instead of N per-stay polars filter+collect calls. Defaults to True.
+            Set False to fall back to the legacy loop (only needed for regression debugging).
+            See memory/project_patchtst_dataloader_bottleneck.md.
     """
 
-    def __init__(self, *args, ram_cache: bool = True, **kwargs):
+    def __init__(self, *args, ram_cache: bool = True, fast_cache: bool = True, **kwargs):
         super().__init__(*args, **kwargs)
         self.outcome_df = self.grouping_df
-        self.ram_cache(ram_cache)
+        if ram_cache and fast_cache:
+            self._build_fast_cache()
+        else:
+            self.ram_cache(ram_cache)
+
+    def _build_fast_cache(self) -> None:
+        """Bulk-materialize all stays via a single polars partition_by pass.
+
+        Replaces the per-sample filter+collect loop with one bulk extraction.
+        Output is bit-identical to the legacy ram_cache path (same enumeration
+        order, same padding logic, same dtypes).
+        """
+        pad_value = 0.0
+        group_col = self.vars["GROUP"]
+        label_col = self.vars["LABEL"]
+        feat_cols = [c for c in self.features_df.columns if c != group_col]
+
+        # Enumeration order must match the legacy __getitem__ contract
+        unique_stays = self.outcome_df[group_col].unique().to_list()
+
+        # One-shot partition: single polars pass each instead of N filter passes
+        feat_parts = self.features_df.partition_by(group_col, as_dict=True)
+        outc_parts = self.outcome_df.partition_by(group_col, as_dict=True)
+
+        # polars 1.x wraps single-key dict keys in a tuple; normalize against
+        # whatever this polars version returned
+        if feat_parts:
+            sample_part_key = next(iter(feat_parts))
+            keys_are_tuples = isinstance(sample_part_key, tuple)
+        else:
+            keys_are_tuples = False
+
+        logging.info(
+            f"Caching {self.split} dataset in ram (fast path: partition_by, "
+            f"{len(unique_stays)} stays)."
+        )
+
+        self._cached_dataset = []
+        for stay_id in unique_stays:
+            k = (stay_id,) if keys_are_tuples else stay_id
+
+            if k in feat_parts:
+                window = feat_parts[k].select(feat_cols).to_numpy()
+            else:
+                window = np.zeros((0, len(feat_cols)))
+            if k in outc_parts:
+                labels = outc_parts[k][label_col].to_numpy().astype(float)
+            else:
+                labels = np.array([], dtype=float)
+
+            if len(labels) == 1:
+                # only one label per stay, align with window
+                labels = np.concatenate([np.empty(window.shape[0] - 1) * np.nan, labels], axis=0)
+
+            length_diff = self.maxlen - window.shape[0]
+            pad_mask = np.ones(window.shape[0])
+
+            if length_diff > 0:
+                window = np.concatenate([window, np.ones((length_diff, window.shape[1])) * pad_value], axis=0)
+                labels = np.concatenate([labels, np.ones(length_diff) * pad_value], axis=0)
+                pad_mask = np.concatenate([pad_mask, np.zeros(length_diff)], axis=0)
+
+            not_labeled = np.argwhere(np.isnan(labels))
+            if len(not_labeled) > 0:
+                labels[not_labeled] = -1
+                pad_mask[not_labeled] = 0
+
+            pad_mask = pad_mask.astype(bool)
+            labels = labels.astype(np.float32)
+            data = window.astype(np.float32)
+
+            self._cached_dataset.append((from_numpy(data), from_numpy(labels), from_numpy(pad_mask)))
 
     def __getitem__(self, idx: int) -> tuple[Tensor, Tensor, Tensor]:
         """Function to sample from the data split of choice. Used for deep learning implementations.

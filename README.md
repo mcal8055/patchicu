@@ -13,7 +13,8 @@ The project has two purposes: (1) demonstrate that a state-of-the-art time-serie
 | Architecture | PatchTST encoder integrated as a YAIB-conformant DL model |
 | Cohort | HiRID-ICU-Benchmark sepsis task — 29,642 stays, hourly resolution |
 | Evaluation | 5 × 5 nested cross-validation, 30-trial Optuna GP tuning |
-| Performance (HiRID, 30-trial) | **AUROC 0.940 [0.938, 0.942], AUPRC 0.312 [0.296, 0.329]** |
+| Performance (HiRID, 30-trial, dropout-integration retrain) | **AUROC 0.939 [0.938, 0.941], AUPRC 0.292 [0.279, 0.305]** |
+| Post-isotonic calibration | Brier 0.103 → 0.019 (5.4× improvement), ECE 0.158 → 0.002 (69×) — discrimination preserved |
 | Cross-site (preliminary, MIMIC-IV) | AUROC 0.955, AUPRC 0.297 — single random trial, untuned |
 | Baselines outperformed | Logistic Regression, LSTM, GRU, TCN, Transformer, LightGBM |
 
@@ -28,7 +29,7 @@ The 30-trial PatchTST result more than doubles the AUPRC of the next-best baseli
 | 2-minute native-resolution variant | Blocked on cohort-generation memory issues; not in this release |
 | Empirical leakage audit (label permutation test) | Static review only; empirical test not yet run |
 | Causal-attention variant (deployment-ready) | Not yet implemented |
-| MC dropout + isotonic calibration | **Available** in [`analysis/mc_calibration.py`](analysis/mc_calibration.py) |
+| Isotonic calibration (per-fold) | **Available** in [`analysis/isotonic_calibration.py`](analysis/isotonic_calibration.py) |
 
 ## Forward research directions
 
