@@ -5,10 +5,12 @@ Post-hoc analysis tools for PatchICU. These are **not** part of YAIB's training 
 ## Pipeline
 
 ```
-extract_predictions.py   per-fold inference → val/test_(probs|labels|mask).npy
-isotonic_calibration.py  per-fold isotonic + scoring → results.json
-aggregate_results.py     mean/std across 25 folds → aggregated_results.json
-make_plots.py            optional: reliability + ROC/PR plots from a fold dir
+extract_predictions.py    per-fold inference → val/test_(probs|labels|mask).npy
+isotonic_calibration.py   per-fold isotonic + scoring → results.json
+aggregate_results.py      mean/std across 25 folds → aggregated_results.json
+make_plots.py             optional: reliability + ROC/PR plots from a fold dir
+compute_curve_analysis.py vertical-averaged ROC/PR across folds → curve_analysis.json
+leadtime_eval.py          AUROC vs hours-before-onset → leadtime_analysis.json
 ```
 
 Shell wrappers: `run_inference.sh` (one fold), `run_all_folds.sh` (25 folds end-to-end), `run_calibrate.sh` / `run_plots.sh` (re-run downstream on existing predictions).
@@ -67,6 +69,22 @@ results = calibrate_and_score(
     test_probs, test_labels, test_mask,
 )
 print(results['post_calibration']['ece'])
+```
+
+## `compute_curve_analysis.py`
+
+Timestep-level ROC and precision–recall curves across the full 5×5 nested-CV test set, emitted as a single DUA-safe `curve_analysis.json` (aggregated arrays only — no per-stay data).
+
+Method: **vertical averaging** (Provost et al. 1998; Hogan & Adams, *On Averaging ROC Curves*, TMLR 2023), not pooling — pooling assumes scores are comparable across fold-models and biases the curve. Per-fold curves are interpolated onto a common FPR/recall grid, vertically averaged **within each repetition**, then aggregated across repetitions as mean ± SD; the 5 repetitions are the independent unit of uncertainty (folds within a repetition partition the same patients). AUPRC uses `average_precision_score` (no linear-interpolation optimism). Operating-point markers use fixed-threshold averaging at multiples of the base rate.
+
+Dataset-agnostic: `--baseline-rate auto` anchors operating points to the cohort's own prevalence, and `--calibrator` is optional (omit when no fitted calibrator exists, e.g. a second cohort — ROC/PR are rank metrics so the curves are unaffected). This is how HiRID (`--baseline-rate 0.0233`, calibrated) and eICU (`--baseline-rate auto`) are run as parallel cohorts.
+
+```bash
+python analysis/compute_curve_analysis.py \
+    --predictions-dir predictions/all_folds_cpu_hirid \
+    --calibrator demo/calibrator.pkl \
+    --baseline-rate 0.0233 --dataset-label HiRID \
+    --output demo/real_trajectories/curve_analysis.json
 ```
 
 ## Uncertainty quantification
